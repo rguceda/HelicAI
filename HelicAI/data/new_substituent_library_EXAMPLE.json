@@ -1,0 +1,38 @@
+{
+  "descriptors": {
+    "vdw": {
+      "0.54": 42.74,
+      "0.36": 41.68,
+      "-0.15": 41.83,
+      "-0.24": 50.62
+    },
+    "r_plus": {
+      "0.54": 0.23,
+      "0.36": 0.10,
+      "-0.15": -0.30,
+      "-0.24": -1.07
+    },
+    "r_minus": {
+      "0.54": 0.27,
+      "0.36": 0.35,
+      "-0.15": -0.19,
+      "-0.24": -0.54
+    }
+  },
+  "names": {
+    "0.54": "CF3",
+    "0.36": "Am (CONH2)",
+    "-0.15": "Et (CH2CH3)",
+    "-0.24": "OEt (OCH2CH3)"
+  },
+  "notes": {
+    "0.36_r_plus": "0.10, confirmed as-is (was marked with an asterisk in the source table)",
+    "OEt_hammett_correction": "OEt's Hammett sigma was corrected from -0.37 to -0.24. -0.37 collided with 'OH' in the original substituent_library.json; -0.24 does not collide with any of the original 16 keys. If your compounds CSV still has Pos_i=-0.37 for OEt rows (generated before this correction), pass hammett_remap={-0.37: -0.24} to validate() so it's translated automatically instead of failing to find a match."
+  },
+  "defaults": {
+    "hammett": 0.0,
+    "vdw": 7.24,
+    "r_plus": 0.0,
+    "r_minus": 0.0
+  }
+}
