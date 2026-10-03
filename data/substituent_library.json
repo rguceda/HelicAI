@@ -64,10 +64,10 @@
     "0.06": "F",
     "0.15": "SH",
     "0.16": "CP",
-    "0.18": "yodo",
-    "0.227": "cloro",
+    "0.18": "I",
+    "0.227": "Cl",
     "0.23": "CC",
-    "0.232": "bromo",
+    "0.232": "Br",
     "0.42": "CHO",
     "0.45": "COOH",
     "0.66": "CN",
@@ -91,7 +91,6 @@
     ],
     "0.06": [
       "F",
-      "fluor"
     ],
     "0.15": [
       "SH"
@@ -100,16 +99,16 @@
       "CP"
     ],
     "0.18": [
-      "yodo"
+      "I"
     ],
     "0.227": [
-      "cloro"
+      "Cl"
     ],
     "0.23": [
       "CC"
     ],
     "0.232": [
-      "bromo"
+      "Br"
     ],
     "0.42": [
       "CHO"
@@ -135,12 +134,6 @@
     "file": "ECD_total_Gauss.csv",
     "n_rows": 12757,
     "n_single_substituent_rows_used_for_verification": 137,
-    "notes": [
-      "16 substituents verified against ALL 12,757 rows (not just the mono-substituted subset): every non-zero Pos_i value found anywhere in the dataset matches exactly one of these 16 entries, no conflicts.",
-      "'F' and 'fluor' are the same substituent (identical vdw/r_plus/r_minus) -- just two different filename spellings; 'F' kept as the preferred name.",
-      "5 extra Hammett values present in the original vdw-only dictionary (0.54, -0.15, -0.25, 0.36, -0.16) were checked and NEVER appear as a Pos_i value anywhere in this dataset -- they are not used substituents here, correctly excluded from screening by default.",
-      "'CP' (hammett=0.16) has vdw=109.17, far larger than any other substituent (13-43 range for the rest). Verify what chemical group this actually is before trusting screening results involving it.",
-      "One file, '6Heliceno_8_bromo_16-bromo_15_yodo.log', has a name suggesting 3 substitutions but nsust=1 and only one substituted position (16, bromo values) in the numeric data -- likely a stray filename inherited from another calculation. Flagged, not used to build this dictionary (its single substituent still matches 'bromo')."
     ]
   }
 }
