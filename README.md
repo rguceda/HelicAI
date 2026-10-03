@@ -29,31 +29,6 @@ HelicAI/
 
 Everything is bundled — there is nothing to upload, mount, or configure. Clone the repo (or download+unzip it), open `HelicAI.ipynb`, run the setup cells, and both blocks work immediately: the setup cell unzips the two model packages into `models/E2E_H` and `models/E2E_64` the first time it runs.
 
-## How to publish this so anyone can use it
-
-### Option A — GitHub (recommended, especially for collaborators)
-1. Create a repository, e.g. `github.com/<you>/HelicAI` (public, or private and shared with your collaborators).
-2. Push this whole folder to it.
-3. Add this to the very top of `HelicAI.ipynb` as a markdown cell, so it renders as a clickable button on GitHub:
-   ```markdown
-   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/<you>/HelicAI/blob/main/HelicAI.ipynb)
-   ```
-4. Also update the `REPO_URL` line in the notebook's first setup cell to point at your actual repo URL.
-5. Anyone with the link clicks the badge and gets a live, fully working copy in their own Colab — the first setup cell clones the repo automatically, nothing to download by hand.
-
-This is the option we'd recommend pointing collaborators and reviewers to — it's also what most reviewers expect to find linked from a methods section.
-
-### Option B — Just the zip (simpler, no GitHub account needed)
-1. Share the zip directly (email, Drive link, whatever).
-2. The person unzips it anywhere in their own Google Drive or local machine, e.g. `/content/drive/MyDrive/HelicAI/`.
-3. They open `HelicAI.ipynb` in Colab and skip (or adapt) the "clone the repo" setup cell, since they already have the folder — just make sure `BASE_DIR` in that cell points to wherever they put it.
-
-Faster to set up, but not really "shareable with a link" the way Option A is.
-
-## A note on honesty for reviewers
-
-Every prediction in this notebook comes from a neural network trained to approximate quantum-chemistry-computed spectra (DFT / xtb-stda), not from a new quantum-chemistry calculation. Always check the applicability-domain flag (explained in Block I), and where possible, validate standout candidates — especially ones from Block II's genetic search — against an independent method or, ideally, an experimental measurement before relying on them.
-
 ## Citation / credit placeholder
 
-If you publish results produced with HelicAI, consider adding a line here pointing to the paper once it exists.
+XXX
