@@ -22,7 +22,7 @@ HelicAI/
 │   ├── spectrum_scan.py                         Save the full predicted spectrum of every candidate
 │   └── train_pipeline.py                        How the models were originally trained
 └── data/
-    ├── ECD_total_Gauss.csv                      The full training dataset (DFT/xtb-stda ECD spectra)
+    ├── ECD_total_Gauss.csv                      The full training dataset (TD-DFT ECD spectra)
     ├── substituent_library.json                 The 16 substituents the models trained on
     └── new_substituent_library_EXAMPLE.json      4 example never-before-seen substituents (CF3, etc.)
 ```
