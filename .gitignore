@@ -1,0 +1,6 @@
+models/
+outputs/
+HelicAI_outputs.zip
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
