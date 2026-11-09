@@ -50,6 +50,7 @@ python scripts/design_candidates.py --model-dir models/E2E_64 --label E2E_64 \
 
 ```
 HelicAI/
+├── LICENSE                       MIT License
 ├── HelicAI.ipynb                 START HERE: "Predict your helicene" and "Design your helicene"
 ├── E2E_H_package.zip             trained E2E-H model (unpacked to models/ by the notebook)
 ├── E2E_64_package.zip            trained E2E-64 model
@@ -72,6 +73,10 @@ HelicAI/
 ```
 
 Running locally: clone the repository, install `tensorflow scikit-learn joblib pandas matplotlib`, and open `HelicAI.ipynb` from the repository folder.
+
+## License
+
+HelicAI (code, notebook, trained models, substituent libraries and dataset) is released under the [MIT License](LICENSE): it can be freely used, modified and redistributed, including for commercial purposes, provided that the copyright and license notice is kept.
 
 ## Citation
 
