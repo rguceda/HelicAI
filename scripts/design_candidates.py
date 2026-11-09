@@ -32,13 +32,24 @@ Three modes:
 All three reuse the vocabulary/descriptor-building/symmetry-deduplication
 code from screen_substituents.py and the model loader from predict_ecd.py.
 
-Example
--------
+Objectives
+----------
+The design campaigns of the HelicAI paper (Supporting Information, Section
+S6) use the band objectives of custom_objectives.py: the area of the single
+largest positive or negative band, maximized or minimized. Pass them either
+as a function, objective=band_objective("negative_band", "min"), or as the
+short string objective="negative_band:min". The results always carry the
+physical band areas ('positive_band_area' = A+max, 'negative_band_area' =
+|A-max|), whatever objective was optimized.
+
+Example (the settings used in the paper)
+----------------------------------------
     python design_candidates.py \\
-        --model-dir E2E_64_package --label E2E_64 \\
-        --library substituent_library.json \\
-        --mode genetic --objective positive_integral \\
-        --k-min 1 --k-max 10 --population-size 300 --n-generations 80 \\
+        --model-dir models/E2E_64 --label E2E_64 \\
+        --library data/substituent_library.json \\
+        --mode genetic --objective positive_band:max \\
+        --ad-penalty-weight 1.0 --k-min 1 --k-max 4 \\
+        --population-size 1000 --n-generations 50 \\
         --output-dir design_results
 """
 
@@ -46,6 +57,8 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import re
+import textwrap
 import time
 from typing import Callable, Optional
 
@@ -59,6 +72,26 @@ from screen_substituents import (
     ALL_64_COLS, N_POSITIONS, build_descriptor_matrix, build_vocabulary,
     is_canonical, load_library, mirror_assignment,
 )
+from custom_objectives import BAND_METRICS, DIRECTIONS, annotate_band_metrics, band_objective
+
+# Names used in the paper for the two groups whose library names are short codes.
+DISPLAY_NAMES = {"CP": "C≡CPh", "CC": "C≡CH"}
+UNITS = r"$R\cdot10^{40}$ / esu cm erg G$^{-1}$"
+E2E64_RED = "#c0272d"
+
+
+_SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+
+
+def display_name(name: str) -> str:
+    """Library name -> notation of the paper: 'CP' -> 'C≡CPh', 'NO2' -> 'NO₂', 'CH3' -> 'CH₃'."""
+    name = DISPLAY_NAMES.get(name, name)
+    return re.sub(r"(?<=[A-Za-z)])(\d+)", lambda m: m.group(1).translate(_SUBSCRIPT), name)
+
+
+def pattern_string(positions, substituent_names) -> str:
+    """(2, 15), ('CP', 'CP') -> '2-C≡CPh, 15-C≡CPh' (the notation of the paper)."""
+    return ", ".join(f"{p}-{display_name(s)}" for p, s in zip(positions, substituent_names))
 
 Candidate = tuple  # (position_tuple, substituent_tuple), positions sorted ascending
 PAIR_INDEX = [(i, N_POSITIONS + 1 - i) for i in range(1, N_POSITIONS // 2 + 1)]  # (1,16),(2,15),...,(8,9)
@@ -110,6 +143,30 @@ def match_target_spectrum_objective(target_spectrum: np.ndarray) -> Callable:
     return objective
 
 
+def _parse_band_objective(objective):
+    """'negative_band:min' -> ('negative_band', 'min'); 'positive_band' -> ('positive_band', 'max');
+    anything else -> None."""
+    if not isinstance(objective, str):
+        return None
+    metric, _, direction = objective.partition(":")
+    direction = direction or "max"
+    if metric in BAND_METRICS and direction in DIRECTIONS:
+        return metric, direction
+    return None
+
+
+def objective_label(objective, target_nm=False, window_nm: float = 30.0) -> str:
+    """Readable name of an objective for printouts and plot titles."""
+    if callable(objective):
+        name = getattr(objective, "label", None) or getattr(objective, "__name__", "custom objective")
+    else:
+        parsed = _parse_band_objective(objective)
+        name = f"{parsed[0]}:{parsed[1]}" if parsed else str(objective)
+    if target_nm not in (False, None):
+        name += f" within {target_nm:g} ± {window_nm:g} nm"
+    return name
+
+
 def resolve_objective(objective, target_nm=False, window_nm: float = 30.0) -> Callable:
     """target_nm is an ON/OFF switch: False (default) -> the objective is
     computed over the FULL spectrum, as usual. A number -> whichever
@@ -125,9 +182,13 @@ def resolve_objective(objective, target_nm=False, window_nm: float = 30.0) -> Ca
         base = objective
     elif objective in BUILTIN_OBJECTIVES:
         base = BUILTIN_OBJECTIVES[objective]
+    elif _parse_band_objective(objective) is not None:
+        base = band_objective(*_parse_band_objective(objective))
     else:
-        raise ValueError(f"Unknown objective '{objective}'. Built-ins: {list(BUILTIN_OBJECTIVES)}, "
-                          "or pass your own callable(row) -> float.")
+        raise ValueError(f"Unknown objective '{objective}'. Use a band objective "
+                          f"'<metric>:<direction>' with metric in {list(BAND_METRICS)} and direction in "
+                          f"{list(DIRECTIONS)} (e.g. 'positive_band:max'), one of the built-ins "
+                          f"{list(BUILTIN_OBJECTIVES)}, or pass your own callable(row) -> float.")
 
     if target_nm is False or target_nm is None:
         return base
@@ -196,6 +257,11 @@ def resolve_substituent_selection(items: list, library: dict) -> list:
     """Maps user-friendly names ('NO2', 'Br', case-insensitive) or raw
     Hammett keys ('0.78') to the internal vocabulary keys."""
     names_to_key = {v.lower(): k for k, v in library.get("names", {}).items()}
+    for k, v in library.get("names", {}).items():            # paper notation, e.g. 'C≡CPh'
+        names_to_key.setdefault(display_name(v).lower(), k)
+    for k, alias_list in library.get("aliases", {}).items():  # any alias listed in the library
+        for alias in alias_list:
+            names_to_key.setdefault(alias.lower(), k)
     valid_keys = set(library["descriptors"]["vdw"].keys())
     resolved, unresolved = [], []
     for item in items:
@@ -493,9 +559,11 @@ class Evaluator:
         rows = []
         for (positions, substituents), spectrum, dist in zip(candidates, y, distances[:, 0]):
             m = spectrum_metrics(spectrum, self.package.wavelengths)
+            sub_names = [self.names.get(k, k) for k in substituents]
             m.update({
+                "pattern": pattern_string(positions, sub_names),
                 "positions": ";".join(str(p) for p in positions),
-                "substituents": ";".join(self.names.get(k, k) for k in substituents),
+                "substituents": ";".join(sub_names),
                 "substituent_hammett_keys": ";".join(substituents),
                 "n_substituents": len(positions),
                 "ad_distance": float(dist),
@@ -510,71 +578,133 @@ class Evaluator:
 
 
 def format_candidate_full(row) -> str:
-    """'5;7;8' + 'NO2;CHO;CN' -> 'Pos5=NO2, Pos7=CHO, Pos8=CN' -- the
-    complete, unabbreviated position->substituent mapping, with no length
-    limit. Meant for a printed legend, not a plot title."""
+    """'5;7;8' + 'NO2;CHO;CN' -> '5-NO2, 7-CHO, 8-CN' -- the complete
+    position-substituent pattern, in the notation of the paper."""
+    if "pattern" in row and isinstance(row["pattern"], str):
+        return row["pattern"]
     positions = str(row["positions"]).split(";")
     substituents = str(row["substituents"]).split(";")
-    return ", ".join(f"Pos{p}={s}" for p, s in zip(positions, substituents))
+    return pattern_string(positions, substituents)
 
 
-def plot_candidates(df: pd.DataFrame, n: int = 6, label: str = "", title: str = "") -> None:
-    """Plots the predicted spectrum of the top n rows of df (as returned by
-    random_search / hill_climb_search / genetic_search, BEFORE the
-    wavelengths/spectrum columns are dropped for CSV export).
+SUMMARY_COLUMNS = ["pattern", "n_substituents", "score", "positive_band_area", "negative_band_area",
+                   "wavelength_at_max_nm", "ad_distance", "outside_applicability_domain"]
 
-    Each panel's title is just 'Candidate N' -- kept short on purpose so it
-    never overflows into the neighboring panel, however many substituents a
-    molecule has (1 or 16, doesn't matter). The FULL position->substituent
-    detail for every candidate is printed as a legend right after the
-    figure, where there's no width limit to fight against."""
+
+def finalize_results(out: pd.DataFrame) -> pd.DataFrame:
+    """Sorts by score, adds the physical band areas (A+max, |A-max|) and a
+    1-based 'rank' column. Keeps the 'wavelengths'/'spectrum' columns."""
+    out = annotate_band_metrics(out.sort_values("score", ascending=False).reset_index(drop=True))
+    out.insert(0, "rank", np.arange(1, len(out) + 1))
+    return out
+
+
+def summary_table(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
+    """Compact, readable view of the best n candidates (no spectra)."""
+    if "positive_band_area" not in df.columns:
+        df = annotate_band_metrics(df)
+    if "rank" not in df.columns:
+        df = df.assign(rank=np.arange(1, len(df) + 1))
+    cols = ["rank"] + [c for c in SUMMARY_COLUMNS if c in df.columns]
+    view = df[cols].head(n).copy()
+    view["score"] = view["score"].map(lambda v: float(f"{v:.6g}"))
+    for c in ("positive_band_area", "negative_band_area", "wavelength_at_max_nm"):
+        if c in view:
+            view[c] = view[c].round(0).astype(int)
+    if "ad_distance" in view:
+        view["ad_distance"] = view["ad_distance"].round(2)
+    return view.rename(columns={"pattern": "substitution pattern", "n_substituents": "k",
+                                "positive_band_area": "A+max", "negative_band_area": "|A-max|",
+                                "wavelength_at_max_nm": "λ(|R|max) / nm", "ad_distance": "AD distance",
+                                "outside_applicability_domain": "outside AD"}).set_index("rank")
+
+
+def _save_results(out: pd.DataFrame, output_dir: Optional[str], filename: str) -> None:
+    if not output_dir:
+        return
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, filename)
+    out.drop(columns=["wavelengths", "spectrum"], errors="ignore").to_csv(path, index=False)
+    print(f"\nSaved: {path}")
+
+
+def plot_candidates(df: pd.DataFrame, n: int = 6, label: str = "", title: str = "",
+                    ncols: int = 2, ylim=None, save_path: Optional[str] = None,
+                    print_list: bool = False) -> None:
+    """Plots the predicted (E2E-64) spectrum of the top n rows of df, in the
+    style of the paper's figures. Each panel is titled with its substitution
+    pattern; the largest positive and negative band areas (A+max, |A-max|, in
+    R·10^40 / esu cm erg G^-1 × nm) are printed below the figure.
+
+    ylim: None -> one common symmetric scale for all panels (so intensities
+    can be compared at a glance); "auto" -> each panel scaled to its own
+    spectrum (useful for weak, minimized spectra); a number -> ±ylim.
+    """
     if "spectrum" not in df.columns:
         print("This dataframe doesn't carry spectra anymore (probably loaded back from a saved "
               "CSV, which drops them to keep the file small) -- nothing to plot.")
         return
+    if "positive_band_area" not in df.columns:
+        df = annotate_band_metrics(df)
 
     top = df.head(n)
-    ncols = 3
+    if top.empty:
+        print("No candidates to plot.")
+        return
     nrows = int(np.ceil(len(top) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(8 * ncols, 5.6 * nrows))
-    axes = np.asarray(axes).ravel()
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6.0 * ncols, 2.9 * nrows + 0.6), squeeze=False)
+    axes = axes.ravel()
 
-    line_color = "#C0272D"       # clean, strong red
-    accent_color = "#4A4A4A"     # dark neutral grey for the zero line
+    if ylim is None:
+        peak = max(float(np.max(np.abs(s))) for s in top["spectrum"])
+        step = 250 if peak > 500 else 50
+        common = step * np.ceil(peak / step)
 
     for i, (ax, (_, row)) in enumerate(zip(axes, top.iterrows()), start=1):
-        wl, spectrum = row["wavelengths"], row["spectrum"]
-        ax.plot(wl, spectrum, linewidth=3, color=line_color, solid_capstyle="round")
-        ax.axhline(0, color=accent_color, linewidth=1, linestyle="-", alpha=0.6, zorder=0)
-        ax.set_xlim(float(wl.min()), float(wl.max()))  # start exactly at 250 nm, no padding
-
+        wl, spectrum = np.asarray(row["wavelengths"]), np.asarray(row["spectrum"])
+        ax.plot(wl, spectrum, linewidth=1.8, color=E2E64_RED, label="E2E-64")
+        ax.axhline(0, color="#8a8985", linewidth=0.7, zorder=0)
+        ax.set_xlim(float(wl.min()), float(wl.max()))
+        if ylim is None:
+            ym = common
+        elif ylim == "auto":
+            ym = 50 * np.ceil(float(np.max(np.abs(spectrum))) / 50) or 50
+        else:
+            ym = float(ylim)
+        ax.set_ylim(-ym, ym)
+        ax.set_yticks([-ym, 0, ym])
         ad_flag = "  ⚠ outside AD" if row["outside_applicability_domain"] else ""
-        ax.set_title(f"Candidate {i}{ad_flag}\nscore = {row['score']:.3g}",
-                     fontsize=19, fontweight="bold", pad=14)
-        ax.set_xlabel("Wavelength (nm)", fontsize=17)
-        ax.set_ylabel("Predicted ECD intensity", fontsize=17)
-        ax.tick_params(axis="both", labelsize=15)
-
+        wrapped = textwrap.fill(f"({i}) {format_candidate_full(row)}", 58)
+        ax.set_title(wrapped + ad_flag, loc="left", fontsize=10, pad=5)
+        ax.set_xlabel(r"$\lambda$ / nm", fontsize=10)
+        if (i - 1) % ncols == 0:
+            ax.set_ylabel(UNITS, fontsize=9)
+        ax.tick_params(labelsize=9)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-        ax.spines["left"].set_color("#888888")
-        ax.spines["bottom"].set_color("#888888")
-        ax.grid(alpha=0.2, linewidth=0.7)
-        ax.set_facecolor("#FAFAFA")
+        ax.grid(color="#e4e3df", linewidth=0.6)
+        ax.set_axisbelow(True)
 
     for ax in axes[len(top):]:
         ax.axis("off")
 
-    fig.suptitle(title or f"{label} — top {len(top)} candidates", fontsize=23, fontweight="bold", y=1.02)
+    fig.suptitle(title or f"{label.replace('_', '-')} — top {len(top)} candidates", fontsize=13, fontweight="bold")
     fig.patch.set_facecolor("white")
     fig.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
+        print(f"Figure saved: {save_path}")
     plt.show()
     plt.close(fig)
 
-    print("\nWhere exactly each candidate is substituted:")
+    if not print_list:
+        return
+    print("\nBest candidates (band areas in R·10^40 / esu cm erg G^-1 × nm):")
     for i, (_, row) in enumerate(top.iterrows(), start=1):
         ad_flag = "  ⚠ outside AD" if row["outside_applicability_domain"] else ""
-        print(f"  Candidate {i} (score={row['score']:.3g}){ad_flag}: {format_candidate_full(row)}")
+        print(f"  ({i}) {format_candidate_full(row)} | A+max = {row['positive_band_area']:,.0f}, "
+              f"|A-max| = {row['negative_band_area']:,.0f}{ad_flag}")
 
 
 # --------------------------------------------------------------------------- #
@@ -614,20 +744,16 @@ def random_search(model_dir: str, label: str, library_path: str, n_samples: int,
               end="\r")
 
     print()
-    out = pd.concat(results, ignore_index=True).sort_values("score", ascending=False)
-    print(f"\nTop {top_n} by '{objective}':")
-    print(out.drop(columns=["wavelengths", "spectrum"]).head(top_n).to_string(index=False))
+    out = finalize_results(pd.concat(results, ignore_index=True))
+    name = objective_label(objective, target_nm, window_nm)
+    if top_n:
+        print(f"\nTop {top_n} by '{name}':")
+        print(summary_table(out, top_n).to_string())
 
     if plot_top_n:
-        plot_candidates(out, n=plot_top_n, label=label, title=f"{label} — random search top candidates by '{objective}'")
+        plot_candidates(out, n=plot_top_n, label=label, title=f"{label.replace('_', '-')} — random search, top candidates by '{name}'")
 
-    if output_dir:
-        import os
-        os.makedirs(output_dir, exist_ok=True)
-        path = os.path.join(output_dir, f"{label}_random_search_results.csv")
-        out.drop(columns=["wavelengths", "spectrum"]).to_csv(path, index=False)
-        print(f"\nSaved: {path}")
-
+    _save_results(out, output_dir, f"{label}_random_search_results.csv")
     return out
 
 
@@ -685,23 +811,21 @@ def hill_climb_search(model_dir: str, label: str, library_path: str, objective="
               f"({len(all_evaluated)} unique molecules evaluated, {time.time() - t0:.0f}s)", end="\r")
 
     print()
-    out = pd.DataFrame(list(all_evaluated.values())).sort_values("score", ascending=False)
-    print(f"\nTop {top_n} by '{objective}' (hill-climbing, {len(all_evaluated)} unique molecules evaluated "
-          f"across {n_restarts} restarts):")
-    print(out.drop(columns=["wavelengths", "spectrum"]).head(top_n).to_string(index=False))
+    out = finalize_results(pd.DataFrame(list(all_evaluated.values())))
+    name = objective_label(objective, target_nm, window_nm)
+    if top_n:
+        print(f"\nTop {top_n} by '{name}' (hill-climbing, {len(all_evaluated)} unique molecules evaluated "
+              f"across {n_restarts} restarts):")
+        print(summary_table(out, top_n).to_string())
 
     if plot_top_n:
         plot_candidates(out, n=plot_top_n, label=label,
-                         title=f"{label} — hill-climb top candidates by '{objective}'")
+                         title=f"{label.replace('_', '-')} — hill climbing, top candidates by '{name}'")
 
+    _save_results(out, output_dir, f"{label}_hill_climb_results.csv")
     if output_dir:
         import os
-        os.makedirs(output_dir, exist_ok=True)
-        path = os.path.join(output_dir, f"{label}_hill_climb_results.csv")
-        out.drop(columns=["wavelengths", "spectrum"]).to_csv(path, index=False)
-        print(f"\nSaved: {path}")
         pd.DataFrame(trajectory).to_csv(os.path.join(output_dir, f"{label}_hill_climb_trajectory.csv"), index=False)
-
     return out
 
 
@@ -709,18 +833,29 @@ def hill_climb_search(model_dir: str, label: str, library_path: str, objective="
 # Mode 3: inverse design via a real genetic algorithm                         #
 # --------------------------------------------------------------------------- #
 
-def genetic_search(model_dir: str, label: str, library_path: str, objective="positive_integral",
-                    target_nm=False, window_nm: float = 30.0, ad_penalty_weight=False,
+def genetic_search(model_dir: str, label: str, library_path: str, objective="positive_band:max",
+                    target_nm=False, window_nm: float = 30.0, ad_penalty_weight=1.0,
                     allowed_substituents=False, allowed_positions=False, force_symmetric: bool = False,
-                    k_min: int = 1, k_max: int = 16, population_size: int = 300, n_generations: int = 60,
+                    k_min: int = 1, k_max: int = 4, population_size: int = 1000, n_generations: int = 50,
                     mutation_rate: float = 0.15, elite_frac: float = 0.1, tournament_size: int = 4,
                     seed: int = 42, output_dir: Optional[str] = None,
-                    top_n: int = 20, plot_top_n: int = 6) -> pd.DataFrame:
+                    top_n: int = 10, plot_top_n: int = 10, plot_ylim=None) -> pd.DataFrame:
     """Population-based genetic search: crossover recombines good partial
     solutions from different individuals (unlike hill_climb_search, which
     only ever refines one solution at a time), so it covers large k (6, 7,
     10, even 16 -- all positions at once) far more broadly for a given
-    evaluation budget."""
+    evaluation budget.
+
+    The defaults are the settings of the HelicAI paper (SI, Table S17):
+    population 1,000, 50 generations, elite fraction 0.10, tournament size 4,
+    uniform crossover, per-gene mutation rate 0.15, AD penalty weight 1.0,
+    seed 42, objective = largest positive band area (maximized).
+
+    Returns a DataFrame sorted by score (best first) with the predicted
+    spectra ('wavelengths', 'spectrum'), the substitution 'pattern', and the
+    physical band areas 'positive_band_area' (A+max) and 'negative_band_area'
+    (|A-max|), in R·10^40 / esu cm erg G^-1 × nm. plot_ylim is passed to
+    plot_candidates (None: common scale; "auto": per panel; or a number)."""
     library = load_library(library_path)
     space = build_search_space(library, allowed_substituents, allowed_positions, force_symmetric)
     evaluator = Evaluator(model_dir, label, library)
@@ -762,27 +897,28 @@ def genetic_search(model_dir: str, label: str, library_path: str, objective="pos
         population = elite + children
         fitness = eval_population(population)
         history.append({"generation": gen, "best_score": max(fitness), "mean_score": float(np.mean(fitness))})
-        print(f"  gen {gen + 1}/{n_generations}: best={max(fitness):.3f}  mean={np.mean(fitness):.3f}  "
+        print(f"  gen {gen + 1}/{n_generations}: best score={max(fitness):.4g}  mean={np.mean(fitness):.4g}  "
               f"({len(all_evaluated)} unique molecules evaluated, {time.time() - t0:.0f}s)", end="\r")
 
     print()
-    out = pd.DataFrame(list(all_evaluated.values())).sort_values("score", ascending=False)
-    print(f"\nTop {top_n} by '{objective}' (genetic algorithm, {n_generations} generations x "
-          f"{population_size} population, {len(all_evaluated)} unique molecules evaluated):")
-    print(out.drop(columns=["wavelengths", "spectrum"]).head(top_n).to_string(index=False))
+    out = finalize_results(pd.DataFrame(list(all_evaluated.values())))
+    name = objective_label(objective, target_nm, window_nm)
+    print(f"Genetic algorithm: {n_generations} generations x {population_size} individuals, "
+          f"{len(all_evaluated):,} unique molecules evaluated in {time.time() - t0:.0f} s "
+          f"(objective '{name}').")
+    if top_n:
+        print(f"\nTop {top_n}:")
+        print(summary_table(out, top_n).to_string())
 
     if plot_top_n:
         plot_candidates(out, n=plot_top_n, label=label,
-                         title=f"{label} — genetic algorithm top candidates by '{objective}'")
+                         title=f"{label.replace('_', '-')} — genetic algorithm, top candidates by '{name}'",
+                         ylim=plot_ylim)
 
+    _save_results(out, output_dir, f"{label}_genetic_results.csv")
     if output_dir:
         import os
-        os.makedirs(output_dir, exist_ok=True)
-        path = os.path.join(output_dir, f"{label}_genetic_results.csv")
-        out.drop(columns=["wavelengths", "spectrum"]).to_csv(path, index=False)
-        print(f"\nSaved: {path}")
         pd.DataFrame(history).to_csv(os.path.join(output_dir, f"{label}_genetic_history.csv"), index=False)
-
     return out
 
 
@@ -792,18 +928,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--label", default="E2E_64")
     p.add_argument("--library", required=True)
     p.add_argument("--mode", choices=["random", "hill_climb", "genetic"], default="random")
-    p.add_argument("--objective", default="positive_integral",
-                    help=f"One of {list(BUILTIN_OBJECTIVES) + ['band_at_wavelength']}, "
-                         "or edit the script to pass a custom callable.")
+    p.add_argument("--objective", default="positive_band:max",
+                    help="Band objective '<metric>:<direction>' as in the paper, with metric in "
+                         f"{list(BAND_METRICS)} and direction max/min (e.g. negative_band:min), "
+                         f"or one of the older built-ins {list(BUILTIN_OBJECTIVES)}.")
     p.add_argument("--target-nm", type=float, default=None,
                     help="ON/OFF switch: omit for 'anywhere in the spectrum', or give a wavelength "
                          "to restrict the objective to that band region.")
     p.add_argument("--window-nm", type=float, default=30.0,
                     help="How far from --target-nm still counts as 'that band'.")
-    p.add_argument("--ad-penalty-weight", type=float, default=None,
-                    help="ON/OFF switch: omit to not penalize candidates outside the applicability "
-                         "domain at all. A positive number (try 1.0) down-weights their score, "
-                         "proportional to how far past the AD threshold they are.")
+    p.add_argument("--ad-penalty-weight", type=float, default=1.0,
+                    help="Down-weights the score of candidates outside the applicability domain, "
+                         "proportionally to how far past the AD threshold they are (1.0, as in the "
+                         "paper). Use 0 to disable the penalty.")
     p.add_argument("--allowed-substituents", nargs="+", default=None,
                     help="Restrict to these substituents only (names like NO2 CN F Br, or Hammett keys). "
                          "Omit for 'all'.")
@@ -816,15 +953,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-samples", type=int, default=20000, help="(random mode) how many molecules to try.")
     p.add_argument("--n-restarts", type=int, default=8, help="(hill_climb mode)")
     p.add_argument("--n-steps", type=int, default=100, help="(hill_climb mode) max steps per restart.")
-    p.add_argument("--population-size", type=int, default=300, help="(genetic mode)")
-    p.add_argument("--n-generations", type=int, default=60, help="(genetic mode)")
+    p.add_argument("--population-size", type=int, default=1000, help="(genetic mode)")
+    p.add_argument("--n-generations", type=int, default=50, help="(genetic mode)")
     p.add_argument("--mutation-rate", type=float, default=0.15, help="(genetic mode) per-gene mutation chance.")
     p.add_argument("--elite-frac", type=float, default=0.1, help="(genetic mode) fraction kept unchanged each gen.")
     p.add_argument("--tournament-size", type=int, default=4, help="(genetic mode)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output-dir", default=None)
-    p.add_argument("--top-n", type=int, default=20)
-    p.add_argument("--plot-top-n", type=int, default=6, help="How many top spectra to plot (0 to disable).")
+    p.add_argument("--top-n", type=int, default=10)
+    p.add_argument("--plot-top-n", type=int, default=0, help="How many top spectra to plot (0 to disable).")
     args, _unknown = p.parse_known_args()
     return args
 
