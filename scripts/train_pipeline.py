@@ -33,12 +33,15 @@ spectrum of a new molecule from an already-trained model package, use
 ``predict_ecd.py`` instead -- it has far fewer dependencies and no
 training/plotting code.
 
-Usage
------
+Usage (settings of the HelicAI article)
+---------------------------------------
     python train_pipeline.py \\
         --input-csv data/ECD_total_Gauss.csv \\
         --output-dir results/ \\
-        --k-folds 5 --test-frac 0.15
+        --k-folds 5 --test-frac 0.15 --augment-symmetry
+
+The architecture search (on by default) selected [64, 32] hidden units for
+both models, which is also the fallback in MODEL_CONFIGS below.
 
 Note on compute time: this trains K+1 models per label (K CV folds + 1
 final model), so a run now takes roughly (K+1)x as long as the old
@@ -85,7 +88,7 @@ AD_PERCENTILE = 95              # applicability-domain warning threshold
 
 MODEL_CONFIGS = {
     "E2E_H":  {"hidden_units": [64, 32],     "dropout": 0.30, "l2": 1e-4, "input_dim": 16},
-    "E2E_64": {"hidden_units": [64, 64, 32], "dropout": 0.30, "l2": 1e-4, "input_dim": 64},
+    "E2E_64": {"hidden_units": [64, 32],     "dropout": 0.30, "l2": 1e-4, "input_dim": 64},
 }
 ACTIVATION = "gelu"
 LEARNING_RATE = 5e-4
