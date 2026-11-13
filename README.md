@@ -7,7 +7,7 @@ Machine-learning prediction and inverse design of the full electronic circular d
 **Open the notebook in Google Colab** (badge above, or <https://colab.research.google.com/github/rguceda/HelicAI/blob/main/HelicAI.ipynb>). It runs in the browser without installation and has two modules:
 
 - **Predict your helicene** — choose the substituent at each of the 16 positions of the scaffold and obtain the complete ECD spectrum (250–600 nm) with E2E-64 and/or E2E-H, together with an applicability-domain check. New substituents can be used with their four descriptors (E2E-64) or with their Hammett constant alone (E2E-H).
-- **Design your helicene** — a genetic algorithm coupled to E2E-64 searches for the substitution patterns that best meet a user-defined objective (maximize or minimize a given ECD band, optionally within a wavelength window), under constraints on substituents, positions, number of substituents and *C*<sub>2</sub> symmetry. The design campaigns of the article can be reproduced with one click.
+- **Design your helicene** — a genetic algorithm coupled to E2E-64 searches for the substitution patterns that best meet a user-defined objective (maximize or minimize a given ECD band, optionally within a wavelength window), under constraints on substituents, positions, number of substituents and *C*<sub>2</sub> symmetry. The settings used in the article are the defaults.
 
 ## The models
 
@@ -38,6 +38,19 @@ designs = dc.genetic_search(
 designs = annotate_band_metrics(designs)    # A+max and |A-max| in physical units
 ```
 
+The six design subcases of the article (Supporting Information, Table S19) differ only in these arguments:
+
+| Subcase | `metric` | `direction` | `k_max` | `target_nm` |
+|---|---|---|---|---|
+| 1 | `positive_band` | `max` | 4 | – |
+| 2 | `positive_band` | `max` | 6 | – |
+| 3 | `positive_band` | `max` | 4 | 500 (± 30 nm) |
+| 4 | `positive_band` | `min` | 4 | – |
+| 5 | `positive_band` | `min` | 6 | – |
+| 6 | `negative_band` | `min` | 4 | – |
+
+The genetic algorithm is stochastic (seed 42), and small numerical differences between TensorFlow versions can change its trajectory. The top candidates may therefore differ slightly from those of the article, while the same substitution motifs are recovered.
+
 or from the command line:
 
 ```bash
@@ -51,6 +64,8 @@ python scripts/design_candidates.py --model-dir models/E2E_64 --label E2E_64 \
 ```
 HelicAI/
 ├── LICENSE                       MIT License
+├── CITATION.cff                  how to cite HelicAI
+├── requirements.txt              Python packages
 ├── HelicAI.ipynb                 START HERE: "Predict your helicene" and "Design your helicene"
 ├── E2E_H_package.zip             trained E2E-H model (unpacked to models/ by the notebook)
 ├── E2E_64_package.zip            trained E2E-64 model
@@ -72,7 +87,24 @@ HelicAI/
     └── new_substituent_library_EXAMPLE.json     the four new substituents of Case III
 ```
 
-Running locally: clone the repository, install `tensorflow scikit-learn joblib pandas matplotlib`, and open `HelicAI.ipynb` from the repository folder.
+## The dataset
+
+`data/ECD_total_Gauss.csv` (semicolon-separated, 12,757 rows, one molecule per row) contains the TD-DFT data used for training:
+
+| Columns | Content |
+|---|---|
+| `Archivo` | name of the TD-DFT output file, which encodes the substitution pattern |
+| `nsust` | number of substituents (1–6) |
+| `Pos_1` … `Pos_16` | Hammett σ<sub>p</sub> of the group at each position (0 = H) |
+| `VdW_1` … `VdW_16` | van der Waals volume (Å<sup>3</sup>) |
+| `Rplus_1` … `Rplus_16`, `Rminus_1` … `Rminus_16` | resonance constants σ<sub>R</sub><sup>+</sup> and σ<sub>R</sub><sup>−</sup> |
+| `R_1`, `nm_1` … `R_100`, `nm_100` | rotatory strength (10<sup>−40</sup> esu cm erg G<sup>−1</sup>) and wavelength (nm) of the 100 lowest-energy singlet transitions |
+
+The continuous spectra are rebuilt from these transitions by `scripts/train_pipeline.py` (Gaussian broadening, σ = 0.30 eV; Supporting Information, Section S1.2).
+
+## Running locally
+
+Clone the repository, run `pip install -r requirements.txt`, and open `HelicAI.ipynb` from the repository folder.
 
 ## License
 
