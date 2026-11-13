@@ -846,7 +846,7 @@ def genetic_search(model_dir: str, label: str, library_path: str, objective="pos
     10, even 16 -- all positions at once) far more broadly for a given
     evaluation budget.
 
-    The defaults are the settings of the HelicAI paper (SI, Table S17):
+    The defaults are the settings of the HelicAI paper (SI, Table S18):
     population 1,000, 50 generations, elite fraction 0.10, tournament size 4,
     uniform crossover, per-gene mutation rate 0.15, AD penalty weight 1.0,
     seed 42, objective = largest positive band area (maximized).

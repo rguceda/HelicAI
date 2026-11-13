@@ -188,7 +188,7 @@ def load_spectra_matching(csv_path: str, npz_path: str, query: str) -> tuple:
 
 DEFAULT_LIBRARY = "/content/substituent_library.json"
 DEFAULT_MODEL_DIR = "/content/E2E_64_package"
-DEFAULT_OUTPUT_DIR = "/content/drive/MyDrive/ecd_project/spectrum_scan_results"
+DEFAULT_OUTPUT_DIR = "/content/spectrum_scan_results"
 
 
 def parse_args() -> argparse.Namespace:
